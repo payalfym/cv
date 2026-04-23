@@ -1,0 +1,7 @@
+# Install dependencies
+opencv-python 
+torch
+torchvision 
+numpy 
+pillow
+flask
