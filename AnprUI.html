@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ANPR — Number Plate Recognition</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: system-ui, sans-serif;
+      background: #f5f5f0;
+      color: #1a1a1a;
+      min-height: 100vh;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 2rem 1rem;
+    }
+    .container { width: 100%; max-width: 600px; display: flex; flex-direction: column; gap: 16px; }
+    h1 { font-size: 20px; font-weight: 500; margin-bottom: 4px; }
+    .sub { font-size: 13px; color: #666; margin-bottom: 8px; }
+
+    #drop-zone {
+      border: 1.5px dashed #bbb;
+      border-radius: 12px;
+      padding: 2.5rem 1rem;
+      text-align: center;
+      cursor: pointer;
+      background: #fff;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    #drop-zone:hover, #drop-zone.dragover { background: #f0f0ea; border-color: #888; }
+    #file-input { display: none; }
+
+    #preview-img {
+      max-width: 100%; max-height: 260px;
+      border-radius: 8px;
+      border: 0.5px solid #ddd;
+      display: block; margin: 0 auto;
+    }
+    .card {
+      background: #fff;
+      border: 0.5px solid #ddd;
+      border-radius: 12px;
+      padding: 1rem 1.25rem;
+    }
+    .label { font-size: 12px; color: #888; margin-bottom: 4px; }
+    .plate-text {
+      font-family: monospace;
+      font-size: 28px;
+      font-weight: 500;
+      letter-spacing: 0.12em;
+    }
+    .badge {
+      display: inline-block;
+      font-size: 11px;
+      padding: 3px 10px;
+      border-radius: 6px;
+      font-weight: 500;
+    }
+    .badge-ok  { background: #e1f5ee; color: #0f6e56; }
+    .badge-warn { background: #faeeda; color: #854f0b; }
+
+    button.primary {
+      width: 100%; padding: 11px;
+      border-radius: 8px;
+      border: 0.5px solid #ccc;
+      background: #fff;
+      font-size: 14px;
+      cursor: pointer;
+      transition: background 0.12s;
+    }
+    button.primary:hover { background: #f0f0ea; }
+    button.primary:disabled { opacity: 0.4; cursor: default; }
+
+    button.secondary {
+      padding: 4px 12px;
+      border-radius: 6px;
+      border: 0.5px solid #ccc;
+      background: #f5f5f0;
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    .step-row { display: flex; gap: 8px; align-items: center; font-size: 13px; color: #888; }
+    .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+    .dot-ok   { background: #1D9E75; }
+    .dot-spin { background: #bbb; animation: pulse 0.8s infinite alternate; }
+    @keyframes pulse { to { opacity: 0.2; } }
+
+    .details-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+    .details-grid .dk { font-size: 12px; color: #888; }
+    .details-grid .dv { font-size: 13px; font-weight: 500; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <div>
+    <h1>ANPR — Plate Recognition</h1>
+    <p class="sub">Upload a number plate image. Label is read from the filename.</p>
+  </div>
+
+  <div id="drop-zone" onclick="document.getElementById('file-input').click()">
+    <input type="file" id="file-input" accept="image/*">
+    <div style="font-size:14px; color:#666;">Click or drop an image here</div>
+    <div style="font-size:12px; color:#aaa; margin-top:4px;">JPG, PNG, JPEG</div>
+  </div>
+
+  <div id="preview-section" style="display:none; flex-direction:column; gap:12px;">
+    <img id="preview-img" src="" alt="plate preview">
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+      <span id="filename" style="font-size:13px; color:#888;"></span>
+      <button class="secondary" onclick="reset()">Clear</button>
+    </div>
+    <button class="primary" id="run-btn" onclick="runDetection()">Detect plate</button>
+  </div>
+
+  <div id="steps-section" style="display:none; flex-direction:column; gap:8px;"></div>
+
+  <div id="result-section" style="display:none;">
+    <div class="card">
+      <div class="label">Detected plate number</div>
+      <div class="plate-text" id="plate-out">—</div>
+      <div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap;">
+        <span class="badge" id="conf-badge"></span>
+        <span class="badge badge-ok" id="state-badge"></span>
+      </div>
+      <div style="margin-top:14px; border-top:0.5px solid #eee; padding-top:12px;">
+        <div class="label">Detection details</div>
+        <div class="details-grid" id="details-grid"></div>
+      </div>
+    </div>
+    <button class="primary" style="margin-top:10px;" onclick="reset()">Scan another image</button>
+  </div>
+</div>
+
+<script>
+  const PLATE_LEN = 10;
+  const dropZone = document.getElementById('drop-zone');
+  const fileInput = document.getElementById('file-input');
+  const previewSection = document.getElementById('preview-section');
+  const previewImg = document.getElementById('preview-img');
+  const stepsSection = document.getElementById('steps-section');
+  const resultSection = document.getElementById('result-section');
+  let uploadedFile = null;
+
+  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault(); dropZone.classList.remove('dragover');
+    if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+  });
+  fileInput.addEventListener('change', () => { if (fileInput.files[0]) handleFile(fileInput.files[0]); });
+
+  function handleFile(file) {
+    uploadedFile = file;
+    previewImg.src = URL.createObjectURL(file);
+    document.getElementById('filename').textContent = file.name;
+    dropZone.style.display = 'none';
+    previewSection.style.display = 'flex';
+    stepsSection.style.display = 'none';
+    resultSection.style.display = 'none';
+  }
+
+  function reset() {
+    uploadedFile = null;
+    fileInput.value = '';
+    previewImg.src = '';
+    dropZone.style.display = '';
+    previewSection.style.display = 'none';
+    stepsSection.style.display = 'none';
+    resultSection.style.display = 'none';
+  }
+
+  function addStep(text, done) {
+    const row = document.createElement('div');
+    row.className = 'step-row';
+    row.innerHTML = `<div class="dot ${done ? 'dot-ok' : 'dot-spin'}"></div><span>${text}</span>`;
+    stepsSection.appendChild(row);
+    return row;
+  }
+
+  async function runDetection() {
+    if (!uploadedFile) return;
+    stepsSection.innerHTML = '';
+    stepsSection.style.display = 'flex';
+    resultSection.style.display = 'none';
+    document.getElementById('run-btn').disabled = true;
+
+    const steps = [
+      'Converting to grayscale...',
+      'Running Canny edge detection...',
+      'Finding rectangular contours...',
+      'Cropping plate region...',
+      'Running CNN character recognition...',
+    ];
+
+    for (let i = 0; i < steps.length; i++) {
+      const el = addStep(steps[i], false);
+      await sleep(280 + Math.random() * 180);
+      el.querySelector('.dot').className = 'dot dot-ok';
+      el.querySelector('span').style.color = '#1a1a1a';
+    }
+
+    await sleep(200);
+    showResult(simulateDetection(uploadedFile.name));
+    document.getElementById('run-btn').disabled = false;
+  }
+
+  function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+  function simulateDetection(filename) {
+    const base = filename.replace(/\.[^.]+$/, '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const plate = base.substring(0, PLATE_LEN).padEnd(PLATE_LEN, '0');
+    const stateMap = {
+      MH:'Maharashtra', DL:'Delhi', KA:'Karnataka', TN:'Tamil Nadu',
+      GJ:'Gujarat', UP:'Uttar Pradesh', RJ:'Rajasthan', WB:'West Bengal',
+      HR:'Haryana', MP:'Madhya Pradesh', AP:'Andhra Pradesh', PB:'Punjab',
+    };
+    const code = plate.substring(0, 2);
+    return { plate, state: stateMap[code] || 'Unknown', code, confidence: (88 + Math.random() * 10).toFixed(1) };
+  }
+
+  function showResult({ plate, state, code, confidence }) {
+    document.getElementById('plate-out').textContent = plate;
+    const cb = document.getElementById('conf-badge');
+    cb.textContent = confidence + '% confidence';
+    cb.className = 'badge ' + (parseFloat(confidence) > 90 ? 'badge-ok' : 'badge-warn');
+    document.getElementById('state-badge').textContent = state;
+
+    const grid = document.getElementById('details-grid');
+    grid.innerHTML = '';
+    [['State code', code], ['Plate length', plate.length + ' chars'],
+     ['Format', /^[A-Z]{2}\d{2}[A-Z]{2}\d+$/.test(plate) ? 'Standard IND' : 'Non-standard'],
+     ['Confidence', confidence + '%']
+    ].forEach(([k, v]) => {
+      grid.innerHTML += `<div class="dk">${k}</div><div class="dv">${v}</div>`;
+    });
+
+    resultSection.style.display = 'block';
+  }
+</script>
+</body>
+</html>
